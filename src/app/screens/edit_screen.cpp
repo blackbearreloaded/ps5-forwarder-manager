@@ -10,6 +10,7 @@
 
 #include "app/context.hpp"
 #include "app/preview_music.hpp"
+#include "app/screens/app_picker_screen.hpp"
 #include "app/screens/art_screen.hpp"
 #include "app/screens/file_picker_screen.hpp"
 #include "app/tile.hpp"
@@ -17,6 +18,7 @@
 #include "core/tween.hpp"
 #include "fwd/image.hpp"
 #include "fwd/store.hpp"
+#include "fwd/stream_catalog.hpp"
 #include "gfx/gl_batch.hpp"
 #include "gfx/renderer.hpp"
 #include "net/http.hpp"
@@ -72,6 +74,8 @@ enum Row
     RowTargetId,
     RowTitleId,
     RowRom,
+    RowPc,
+    RowApp,
     RowExit,
     RowIcon,
     RowBackground,
@@ -86,6 +90,8 @@ enum class Prompting
     name,
     target_id,
     title_id,
+    pc,
+    app,
 };
 
 const Color kWhite = Color::rgb(0xffffff);
@@ -113,6 +119,7 @@ class EditScreen final : public Screen
         if (forwarder_.target.empty())
             forwarder_.target = "PPSA99008";
         target_index_ = index_for_target(forwarder_.target);
+        sync_stream();
         restyle(context);
         form_.set_bounds(kFormBounds);
         form_.set_active(true);
@@ -167,6 +174,75 @@ class EditScreen final : public Screen
         return targets[static_cast<std::size_t>(target_index_)];
     }
 
+    // Reads what the streaming client published and lines the PC choice up with
+    // the PC this forwarder names. A new forwarder takes the first PC.
+    void sync_stream()
+    {
+        catalog_.clear();
+        pc_index_ = 0;
+        pc_custom_ = false;
+        if (!is_stream_target(forwarder_.target))
+            return;
+        catalog_ = read_stream_catalog();
+        if (catalog_.empty())
+            return;
+        const int found = find_stream_pc(catalog_, forwarder_.pc);
+        if (found >= 0)
+            pc_index_ = found;
+        else if (forwarder_.pc.empty() && !editing_)
+            forwarder_.pc = stream_pc_argument(catalog_, catalog_[0]);
+        else
+        {
+            // Typed earlier, or left to the last PC used: kept as one more choice.
+            pc_custom_ = true;
+            pc_custom_value_ = forwarder_.pc;
+            pc_index_ = static_cast<int>(catalog_.size());
+        }
+    }
+
+    // The PC chosen from the published list; nullptr when it is not one of them.
+    const StreamPc *selected_pc() const
+    {
+        return pc_index_ >= 0 && pc_index_ < static_cast<int>(catalog_.size())
+                   ? &catalog_[static_cast<std::size_t>(pc_index_)]
+                   : nullptr;
+    }
+
+    std::vector<std::string> pc_options() const
+    {
+        std::vector<std::string> options;
+        for (const StreamPc &pc : catalog_)
+            options.push_back(stream_pc_argument(catalog_, pc) == pc.name
+                                  ? pc.name
+                                  : pc.name + " (" + pc.address + ")");
+        if (pc_custom_)
+            options.push_back(pc_custom_value_.empty() ? "The last one used" : pc_custom_value_);
+        return options;
+    }
+
+    // The app picked from the list: its name, and its box art as the tile icon
+    // unless the player chose an icon of their own.
+    void pick_app(const StreamApp &app)
+    {
+        forwarder_.app = app.name;
+        if (forwarder_.display_name.empty())
+            forwarder_.display_name = app.name;
+        if (!app.poster.empty() && (!has_icon() || icon_from_poster_))
+        {
+            const std::vector<unsigned char> art = read_stream_file(app.poster);
+            std::vector<unsigned char> icon =
+                art.empty() ? art : make_icon_png(art.data(), art.size());
+            if (!icon.empty())
+            {
+                assets_.icon_png = std::move(icon);
+                icon_dirty_ = true;
+                icon_from_poster_ = true;
+            }
+        }
+        dirty_ = true;
+        build(*context_);
+    }
+
     bool has_icon() const
     {
         return forwarder_.has_icon || !assets_.icon_png.empty();
@@ -200,10 +276,29 @@ class EditScreen final : public Screen
         form_.add_action(RowTitleId, "Forwarder title ID").text = forwarder_.title_id;
 
         form_.add_header("Launch");
-        form_.add_action(RowRom, "ROM file").text =
-            forwarder_.rom.empty() ? "(none)" : forwarder_.rom;
+        if (current_target().stream)
+        {
+            // A streaming client starts an app on a PC, not a ROM.
+            // With what the client published, both are picked; without it, typed.
+            if (!catalog_.empty())
+                form_.add_choice(RowPc, "PC", pc_options(), pc_index_);
+            else
+                form_.add_action(RowPc, "PC (name or address)").text =
+                    forwarder_.pc.empty() ? "(the last one used)" : forwarder_.pc;
+            hui::ui::FormRow &app = form_.add_action(RowApp, "App on that PC");
+            app.text = forwarder_.app.empty() ? "(required)" : forwarder_.app;
+            app.chevron = selected_pc() != nullptr && !selected_pc()->apps.empty();
+        }
+        else
+        {
+            form_.add_action(RowRom, "ROM file").text =
+                forwarder_.rom.empty() ? "(none)" : forwarder_.rom;
+        }
         if (current_target().exit_after_game)
-            form_.add_toggle(RowExit, "Exit after quitting game", forwarder_.exit_after_game);
+            form_.add_toggle(RowExit,
+                             current_target().stream ? "Exit after the stream"
+                                                     : "Exit after quitting game",
+                             forwarder_.exit_after_game);
 
         form_.add_header("Presentation");
         form_.add_action(RowIcon, "Tile icon").text = has_icon() ? "set" : "(required)";
@@ -235,6 +330,12 @@ class EditScreen final : public Screen
         if (forwarder_.target.empty())
         {
             toasts_.push(hui::ui::StatusKind::warning, "A target title ID is required");
+            return;
+        }
+        if (is_stream_target(forwarder_.target) && forwarder_.app.empty())
+        {
+            toasts_.push(hui::ui::StatusKind::warning, "The app to start is required",
+                         "Its name as ProsperoLight's Games page shows it.");
             return;
         }
         if (!has_icon())
@@ -297,6 +398,13 @@ class EditScreen final : public Screen
             return;
         }
 
+        if (type_app_) // asked for from the app list
+        {
+            type_app_ = false;
+            open_prompt(Prompting::app, "App name, as ProsperoLight shows it", forwarder_.app,
+                        feedback);
+            return;
+        }
         if (input.is_pressed(hui::Action::back))
         {
             context.pop();
@@ -317,6 +425,22 @@ class EditScreen final : public Screen
             else if (forwarder_.target == "PPSA99008" || forwarder_.target == "PPSA99764" ||
                      forwarder_.target == "PPSA99203")
                 forwarder_.target.clear();
+            sync_stream();
+            build(context);
+        }
+        else if (event == hui::ui::Event::changed && form_.changed_id() == RowPc)
+        {
+            pc_index_ = form_.choice_index(RowPc);
+            const StreamPc *pc = selected_pc();
+            forwarder_.pc = pc != nullptr ? stream_pc_argument(catalog_, *pc) : pc_custom_value_;
+            // An app of the PC left behind means nothing on this one.
+            bool listed = pc == nullptr;
+            if (pc != nullptr)
+                for (const StreamApp &app : pc->apps)
+                    listed = listed || app.name == forwarder_.app;
+            if (!listed)
+                forwarder_.app.clear();
+            dirty_ = true;
             build(context);
         }
         else if (event == hui::ui::Event::changed && form_.changed_id() == RowExit)
@@ -345,6 +469,27 @@ class EditScreen final : public Screen
         case RowTitleId:
             open_prompt(Prompting::title_id, "Forwarder title ID", forwarder_.title_id, feedback);
             break;
+        case RowPc:
+            open_prompt(Prompting::pc, "PC name or address (empty: the last one used)",
+                        forwarder_.pc, feedback);
+            break;
+        case RowApp:
+            if (const StreamPc *pc = selected_pc(); pc != nullptr && !pc->apps.empty())
+            {
+                EditScreen *self = this;
+                context.push(make_app_picker_screen(context, *pc,
+                                                    [self](const StreamApp *app)
+                                                    {
+                                                        if (app != nullptr)
+                                                            self->pick_app(*app);
+                                                        else
+                                                            self->type_app_ = true;
+                                                    }));
+                break;
+            }
+            open_prompt(Prompting::app, "App name, as ProsperoLight shows it", forwarder_.app,
+                        feedback);
+            break;
         case RowRom:
         {
             EditScreen *self = this;
@@ -366,6 +511,7 @@ class EditScreen final : public Screen
                                          [self](std::vector<unsigned char> bytes)
                                          {
                                              self->assets_.icon_png = std::move(bytes);
+                                             self->icon_from_poster_ = false;
                                              self->dirty_ = true;
                                              self->icon_dirty_ = true;
                                          }));
@@ -526,7 +672,8 @@ class EditScreen final : public Screen
     {
         prompting_ = kind;
         prompt_.set_title(title);
-        prompt_.style.max_length = kind == Prompting::name ? 60 : 9;
+        prompt_.style.max_length =
+            kind == Prompting::name || kind == Prompting::pc || kind == Prompting::app ? 60 : 9;
         prompt_.open(feedback, initial);
     }
 
@@ -539,6 +686,12 @@ class EditScreen final : public Screen
             break;
         case Prompting::target_id:
             forwarder_.target = value;
+            break;
+        case Prompting::pc:
+            forwarder_.pc = value;
+            break;
+        case Prompting::app:
+            forwarder_.app = value;
             break;
         case Prompting::title_id:
             if (valid_title_id(value))
@@ -742,7 +895,10 @@ class EditScreen final : public Screen
                       304.0f, 88.0f, untitled ? kWhite.with_alpha(0.45f) : kWhite);
 
         // "<system>  ·  <title id>  ·  <ROM>", as the concept's genre · year · studio.
-        const std::string rom = forwarder_.rom.empty() ? std::string("no ROM") : forwarder_.rom;
+        const bool stream = is_stream_target(forwarder_.target);
+        const std::string rom =
+            stream ? (forwarder_.app.empty() ? std::string("no app") : forwarder_.app)
+                   : (forwarder_.rom.empty() ? std::string("no ROM") : forwarder_.rom);
         (void)std::snprintf(text, sizeof(text), "%s  \xC2\xB7  %s  \xC2\xB7  %s",
                             target_display_name(forwarder_.target).c_str(),
                             forwarder_.title_id.c_str(), rom.c_str());
@@ -750,9 +906,12 @@ class EditScreen final : public Screen
                       26.0f, kWhite.with_alpha(0.78f));
 
         // The blurb: what the tile will do, and what the preview is showing.
-        std::string blurb = "Launches " + target_display_name(forwarder_.target) +
-                            (forwarder_.rom.empty() ? std::string(" without a ROM.")
-                                                    : std::string(" with the ROM above."));
+        std::string blurb =
+            "Launches " + target_display_name(forwarder_.target) +
+            (stream ? (forwarder_.app.empty() ? std::string(" and waits for an app to be named.")
+                                              : std::string(" and starts streaming the app above."))
+             : forwarder_.rom.empty() ? std::string(" without a ROM.")
+                                      : std::string(" with the ROM above."));
         if (has_background() && background_tex_ != 0)
             blurb += " Its background is behind this screen";
         if (has_music() && context.music != nullptr && context.music->playing())
@@ -904,6 +1063,13 @@ class EditScreen final : public Screen
     std::uint32_t icon_tex_ = 0;
     std::uint32_t background_tex_ = 0;
     bool icon_dirty_ = false;       // a new icon was picked
+    bool icon_from_poster_ = false; // the icon is the picked app's box art, not the player's choice
+    // What the streaming target's client published (fwd/stream_catalog.hpp).
+    std::vector<StreamPc> catalog_;
+    int pc_index_ = 0; // into catalog_; one past it: pc_custom_value_
+    bool pc_custom_ = false;
+    std::string pc_custom_value_;
+    bool type_app_ = false;         // open the app name prompt on the next frame
     bool background_dirty_ = false; // a new background was picked
     bool music_dirty_ = false;      // new music was picked or converted
     bool existing_loaded_ = false;  // an existing forwarder's files were read

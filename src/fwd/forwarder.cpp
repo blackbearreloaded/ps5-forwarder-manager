@@ -23,15 +23,24 @@ std::string target_display_name(const std::string &title_id)
     return title_id.empty() ? std::string("(no target)") : title_id;
 }
 
+bool is_stream_target(const std::string &title_id)
+{
+    for (const Target &target : known_targets())
+        if (target.stream && title_id == target.title_id)
+            return true;
+    return false;
+}
+
 std::vector<Target> known_targets()
 {
     // The target apps PS5 Forwarder Builder supports (from ps5-forwarder.mph.am):
     return {
-        {"PPSA99008", "ProsperoEden", true, true}, // Nintendo Switch (Eden)
-        {"PPSA99764", "Porpoise", true, false},    // GameCube / Wii (RetroArch)
-        {"PPSA99203", "PS5SX2", true, false},      // PlayStation 2 (PCSX2)
-        {"PPSA50011", "PS5X360", true, false},     // Xbox 360 (Xenia)
-        {"PPSA00000", "Payload", true, false},     // ELF payload launcher
+        {"PPSA99008", "ProsperoEden", true, true},         // Nintendo Switch (Eden)
+        {"PPSA99764", "Porpoise", true, false},            // GameCube / Wii (RetroArch)
+        {"PPSA99203", "PS5SX2", true, false},              // PlayStation 2 (PCSX2)
+        {"PPSA50011", "PS5X360", true, false},             // Xbox 360 (Xenia)
+        {"PPSA00000", "Payload", true, false},             // ELF payload launcher
+        {"PPSA99002", "ProsperoLight", false, true, true}, // Moonlight/Sunshine streaming
         {"", "Generic (enter a title ID)", false, false},
     };
 }
@@ -39,12 +48,20 @@ std::vector<Target> known_targets()
 std::vector<Argument> Forwarder::resolved_args() const
 {
     std::vector<Argument> args;
-    if (!rom.empty())
+    const bool stream = is_stream_target(target);
+    if (stream)
+    {
+        if (!pc.empty())
+            args.push_back({"--pc", pc});
+        if (!app.empty())
+            args.push_back({"--app", app});
+    }
+    else if (!rom.empty())
         args.push_back({"--rom", rom});
     for (const Argument &argument : extra_args)
         args.push_back(argument);
     if (exit_after_game)
-        args.push_back({"--exit-after-game", ""});
+        args.push_back({stream ? "--exit-after-stream" : "--exit-after-game", ""});
     return args;
 }
 

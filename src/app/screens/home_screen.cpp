@@ -441,13 +441,22 @@ class HomeScreen final : public Screen
                             target_display_name(f.target).c_str(), f.title_id.c_str());
         hui::ui::text(list, fonts.regular, fonts.regular.font->fit(meta, 26.0f, kHeroTextWidth), x,
                       372, 26, kWhite.with_alpha(0.78f));
-        if (!f.rom.empty())
+        if (is_stream_target(f.target) && !f.app.empty())
+            hui::ui::text(
+                list, fonts.regular,
+                fonts.regular.font->fit("Streams: " + f.app +
+                                            (f.pc.empty() ? std::string() : " from " + f.pc),
+                                        24.0f, kHeroTextWidth),
+                x, 414, 24, kWhite.with_alpha(0.7f));
+        else if (!f.rom.empty())
             hui::ui::text(list, fonts.regular,
                           fonts.regular.font->fit("ROM: " + f.rom, 24.0f, kHeroTextWidth), x, 414,
                           24, kWhite.with_alpha(0.7f));
         if (f.exit_after_game)
-            hui::ui::text(list, fonts.regular, "Exits when you quit the game", x, 452, 22,
-                          kWhite.with_alpha(0.55f));
+            hui::ui::text(list, fonts.regular,
+                          is_stream_target(f.target) ? "Exits when the stream ends"
+                                                     : "Exits when you quit the game",
+                          x, 452, 22, kWhite.with_alpha(0.55f));
         draw_cta(list, fonts, x, "Edit", accent);
         list.pop_opacity();
     }

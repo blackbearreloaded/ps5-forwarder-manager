@@ -27,6 +27,12 @@ The screenshots use demo forwarders for freeware and open-source games.
   or from any image file, encoding them to the exact
   formats the PS5 shell expects: a 512x512 PNG icon and 3840x2160 BC7 DDS
   backgrounds.
+- Makes tiles for PC games streamed with
+  [ProsperoLight](https://github.com/blackbearreloaded/ProsperoLight): pick one of
+  its paired PCs and one of that PC's apps from a list with box art, which also
+  becomes the tile icon. The tile starts the stream by itself (`--pc`, `--app`,
+  `--exit-after-stream`). The lists are what ProsperoLight keeps under
+  `/data/prosperolight/forwarder`; without them the PC and app are typed.
 - Writes a complete tile folder (shared `eboot.bin` + `libc.prx`,
   `forwarder.json`, `sce_sys/param.json`, art) that ShadowMountPlus registers.
 

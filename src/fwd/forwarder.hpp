@@ -29,10 +29,17 @@ struct Target
     const char *name;
     bool rom_arg;         // takes --rom <file>
     bool exit_after_game; // supports --exit-after-game
+    // A streaming client (ProsperoLight): no ROM, but a PC and one of its apps,
+    // passed as --pc <name or address> and --app <name or number>; its exit
+    // flag is --exit-after-stream.
+    bool stream = false;
 };
 
 // The built-in emulator targets the site offers, plus "generic".
 std::vector<Target> known_targets();
+
+// True when the target is a streaming client rather than an emulator.
+bool is_stream_target(const std::string &title_id);
 
 // A friendly name for a target title ID (emulator name, or the ID itself).
 std::string target_display_name(const std::string &title_id);
@@ -43,6 +50,8 @@ struct Forwarder
     std::string display_name; // shown under the tile
     std::string target;       // title ID of the app to launch
     std::string rom;          // ROM file path/name passed as --rom (optional)
+    std::string pc;           // streaming target: the saved PC (optional: the last one used)
+    std::string app;          // streaming target: the app to start on that PC
     bool exit_after_game = false;
     std::vector<Argument> extra_args; // anything beyond rom/exit flags
 
@@ -52,7 +61,8 @@ struct Forwarder
     bool has_music = false;
 
     // Build the launch argument list the way the site does: --rom first (when
-    // set), then the extra arguments, then --exit-after-game (when set).
+    // set), then the extra arguments, then --exit-after-game (when set). A
+    // streaming target gets --pc and --app first and --exit-after-stream last.
     std::vector<Argument> resolved_args() const;
 };
 

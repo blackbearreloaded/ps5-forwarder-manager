@@ -45,7 +45,13 @@ void split_args(const psfwd_info &info, Forwarder &out)
             i += 2;
             continue;
         }
-        if (key == "--exit-after-game")
+        if ((key == "--pc" || key == "--app") && i + 1 < info.argc)
+        {
+            (key == "--pc" ? out.pc : out.app) = info.argv[i + 1];
+            i += 2;
+            continue;
+        }
+        if (key == "--exit-after-game" || key == "--exit-after-stream")
         {
             out.exit_after_game = true;
             i += 1;
