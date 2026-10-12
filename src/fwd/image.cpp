@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 // The build compiles third_party with -w, but this translation unit is built
@@ -347,6 +348,61 @@ std::vector<unsigned char> make_icon_png(const unsigned char *data, std::size_t 
     if (!decode_image(data, size, w, h, rgba))
         return {};
     return make_icon_png_rgba(rgba.data(), w, h);
+}
+
+std::vector<unsigned char> make_poster_icon_png(const unsigned char *data, std::size_t size)
+{
+    int w = 0, h = 0;
+    std::vector<unsigned char> rgba;
+    if (!decode_image(data, size, w, h, rgba))
+        return {};
+    if (w == h)
+        return make_icon_png_rgba(rgba.data(), w, h);
+
+    // How much detail each line across the long side holds: the sum of the steps
+    // in brightness between neighbouring pixels. A plain or softly shaded
+    // background scores next to nothing; a logo, lettering or a picture scores high.
+    const bool tall = h > w;
+    const int length = tall ? h : w;
+    const int across = tall ? w : h;
+    const auto light = [&](int along, int cross)
+    {
+        const unsigned char *p =
+            rgba.data() +
+            (static_cast<std::size_t>(tall ? along : cross) * w + (tall ? cross : along)) * 4;
+        return (p[0] * 54 + p[1] * 183 + p[2] * 19) >> 8;
+    };
+    std::vector<long> detail(static_cast<std::size_t>(length), 0);
+    long most = 0;
+    for (int along = 0; along < length; ++along)
+    {
+        long sum = 0;
+        for (int cross = 1; cross < across; ++cross)
+            sum += std::abs(light(along, cross) - light(along, cross - 1));
+        detail[static_cast<std::size_t>(along)] = sum;
+        most = std::max(most, sum);
+    }
+    // The stretch of lines that hold artwork, and the square cut around its middle.
+    int first = 0;
+    int last = length - 1;
+    if (most > 0)
+    {
+        const long enough = most / 8;
+        while (first < last && detail[static_cast<std::size_t>(first)] < enough)
+            ++first;
+        while (last > first && detail[static_cast<std::size_t>(last)] < enough)
+            --last;
+    }
+    const int start = std::clamp((first + last + 1) / 2 - across / 2, 0, length - across);
+
+    std::vector<unsigned char> square(static_cast<std::size_t>(across) * across * 4);
+    for (int y = 0; y < across; ++y)
+        std::memcpy(
+            square.data() + static_cast<std::size_t>(y) * across * 4,
+            rgba.data() +
+                (static_cast<std::size_t>(y + (tall ? start : 0)) * w + (tall ? 0 : start)) * 4,
+            static_cast<std::size_t>(across) * 4);
+    return make_icon_png_rgba(square.data(), across, across);
 }
 
 std::vector<unsigned char> make_background_dds_rgba_sized(const unsigned char *rgba, int w, int h,

@@ -41,6 +41,12 @@ std::vector<unsigned char> make_icon_png(const unsigned char *data, std::size_t 
 // Also accept already-decoded RGBA:
 std::vector<unsigned char> make_icon_png_rgba(const unsigned char *rgba, int w, int h);
 
+// A tile icon from box art, which is taller than it is wide. The square is cut
+// where the artwork is, not from the middle: a logo placed high on a plain
+// poster ends up centred instead of pushed against the top. Art that fills its
+// poster is cut from the middle, as make_icon_png() does. Empty on failure.
+std::vector<unsigned char> make_poster_icon_png(const unsigned char *data, std::size_t size);
+
 // Scale an image to COVER 1920x1080 (center-crop overflow), encode as a
 // BC7 (mode 6) DDS, as the website's backgroundRgba()+backgroundDds() does.
 // Capped at 1080p (down from the site's 4K) to stay within the 128 MB app

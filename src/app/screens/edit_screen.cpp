@@ -231,7 +231,7 @@ class EditScreen final : public Screen
         {
             const std::vector<unsigned char> art = read_stream_file(app.poster);
             std::vector<unsigned char> icon =
-                art.empty() ? art : make_icon_png(art.data(), art.size());
+                art.empty() ? art : make_poster_icon_png(art.data(), art.size());
             if (!icon.empty())
             {
                 assets_.icon_png = std::move(icon);

@@ -66,6 +66,69 @@ int main(int, char **argv)
 """
 
 
+ICON_PROGRAM = r"""
+#include "fwd/image.hpp"
+#include <cassert>
+#include <cstring>
+#include <vector>
+// A 24-bit BMP, 60 wide and 80 tall: plain grey with a white band on rows first..last.
+static std::vector<unsigned char> poster(int first, int last)
+{
+    const int w = 60, h = 80;
+    std::vector<unsigned char> bmp(54 + w * h * 3, 0);
+    bmp[0] = 'B'; bmp[1] = 'M';
+    const unsigned size = static_cast<unsigned>(bmp.size());
+    std::memcpy(&bmp[2], &size, 4);
+    bmp[10] = 54; bmp[14] = 40; bmp[18] = w; bmp[22] = h; bmp[26] = 1; bmp[28] = 24;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            // Stripes inside the band, so the band is detail and not just a lighter area.
+            const bool band = y >= first && y <= last;
+            const unsigned char value = band ? (x % 6 < 3 ? 255 : 0) : 90;
+            unsigned char *p = &bmp[54 + ((h - 1 - y) * w + x) * 3];
+            p[0] = p[1] = p[2] = value;
+        }
+    return bmp;
+}
+// The middle row of the band in the 512-pixel icon: where its column 1 is brightest.
+static int band_middle(const std::vector<unsigned char> &bmp)
+{
+    const std::vector<unsigned char> png = fwd::make_poster_icon_png(bmp.data(), bmp.size());
+    int w = 0, h = 0;
+    std::vector<unsigned char> rgba;
+    assert(!png.empty() && fwd::decode_image(png.data(), png.size(), w, h, rgba));
+    assert(w == 512 && h == 512);
+    int first = -1, last = -1;
+    for (int y = 0; y < h; ++y)
+        if (rgba[(y * w + 8) * 4] > 200)
+        {
+            if (first < 0)
+                first = y;
+            last = y;
+        }
+    assert(first >= 0);
+    return (first + last) / 2;
+}
+int main()
+{
+    // Artwork above the middle of a plain poster ends up in the middle of the tile. A cut
+    // from the middle would leave it a third of the way down.
+    const int high = band_middle(poster(26, 35));
+    assert(high > 256 - 24 && high < 256 + 24);
+    // Artwork low on the poster too.
+    const int low = band_middle(poster(45, 54));
+    assert(low > 256 - 24 && low < 256 + 24);
+    // Artwork over the whole poster: cut from the middle, as before.
+    const std::vector<unsigned char> full = poster(0, 79);
+    assert(fwd::make_poster_icon_png(full.data(), full.size()) ==
+           fwd::make_icon_png(full.data(), full.size()));
+    assert(fwd::make_poster_icon_png(nullptr, 0).empty());
+    return 0;
+}
+"""
+
+
 def pc(key, name, address, port, apps):
     return json.dumps({"format": "prosperolight-forwarder-catalog/1", "key": key, "name": name,
                        "address": address, "port": port, "apps": apps})
@@ -108,6 +171,17 @@ class StreamTargetTests(unittest.TestCase):
                             "-o", str(folder / "check")],
                            check=True)
             subprocess.run([str(folder / "check"), str(catalog)], check=True)
+
+    def test_box_art_icon_is_cut_around_the_artwork(self):
+        compiler = shutil.which("clang++") or shutil.which("g++")
+        self.assertIsNotNone(compiler)
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "check.cpp").write_text(ICON_PROGRAM)
+            subprocess.run([compiler, "-std=c++20", "-w", "-I" + str(ROOT / "src"), "-I" + str(ROOT),
+                            str(folder / "check.cpp"), str(ROOT / "src/fwd/image.cpp"), "-o",
+                            str(folder / "check")], check=True)
+            subprocess.run([str(folder / "check")], check=True)
 
     def test_a_saved_forwarder_reads_back(self):
         store = (ROOT / "src/fwd/store.cpp").read_text()
